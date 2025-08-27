@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Umfrage – Kiosk (Microsoft Forms, Auto-Loop)</title>
+  <style>
+    html, body { height: 100%; margin: 0; background: #0b0f13; font-family: -apple-system, system-ui, sans-serif; }
+    iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
+    .controls { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 12px; z-index: 10; }
+    .btn {
+      appearance: none; border: 0; border-radius: 16px; padding: 14px 18px;
+      font-size: 18px; font-weight: 700; cursor: pointer; color: #0b0f13; background: #e6f4ff;
+      box-shadow: 0 8px 24px rgba(0,0,0,.24);
+    }
+    .countdown {
+      position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+      background: rgba(255,255,255,.95); color: #0b0f13; border-radius: 14px; padding: 12px 16px;
+      font-weight: 700; font-size: 16px; display: none; z-index: 10;
+    }
+    .note {
+      position: fixed; left: 50%; top: 12px; transform: translateX(-50%);
+      background: #fff3cd; color: #5c4700; border-radius: 12px; padding: 10px 14px; font-weight: 700;
+      display: none; z-index: 10; box-shadow: 0 6px 18px rgba(0,0,0,.18);
+    }
+  </style>
+</head>
+<body>
+  <iframe id="formFrame" src="about:blank"></iframe>
+
+  <div class="controls">
+    <button class="btn" id="reloadBtn">Neu starten</button>
+    <button class="btn" id="openDirectBtn">Direkt öffnen</button>
+  </div>
+  <div class="countdown" id="countdown"></div>
+  <div class="note" id="note"></div>
+
+  <script>
+    // === KONFIGURATION ===
+    // 1) Trage hier den EMBED-LINK (mit &embed=true) vom Ersteller ein:
+    const FORM_URL = "https://forms.office.com/Pages/ResponsePage.aspx?id=cFExqCTc9kq5Ok7LmM4erdEAixt-kblIgkqRsV6rRZ9UREtTV0M3UVJNV0U1SFpYN1dRVTRKM1ZZMi4u&embed=true"; // z.B. https://forms.office.com/Pages/ResponsePage.aspx?id=...&embed=true
+
+    // 2) Sekunden bis automatischer Neustart NACH dem Absenden (Danke-Seite erkannt = 2. load)
+    const RESTART_DELAY_SEC = 8;
+
+    // 3) Optional: Harte Zeitbombe in MINUTEN ab dem ersten Laden (0 = aus).
+    //    Falls eure Danke-Seite KEIN neues load triggert, setze z.B. 3–5 Minuten:
+    const FALLBACK_RESET_MINUTES = 0; // Beispiel: 4
+
+    // === LOGIK ===
+    const frame = document.getElementById('formFrame');
+    const reloadBtn = document.getElementById('reloadBtn');
+    const openDirectBtn = document.getElementById('openDirectBtn');
+    const cdEl = document.getElementById('countdown');
+    const note = document.getElementById('note');
+
+    let firstLoadSeen = false;
+    let countdownTimer = null;
+    let remaining = RESTART_DELAY_SEC;
+    let fallbackTimer = null;
+    let loadGuard = null;
+
+    function showNote(msg, ms = 6000) {
+      note.textContent = msg;
+      note.style.display = 'block';
+      clearTimeout(loadGuard);
+      loadGuard = setTimeout(() => note.style.display = 'none', ms);
+    }
+
+    function startCountdown() {
+      clearInterval(countdownTimer);
+      remaining = RESTART_DELAY_SEC;
+      cdEl.style.display = 'block';
+      cdEl.textContent = `Starte neu in ${remaining}s …`;
+      countdownTimer = setInterval(() => {
+        remaining--;
+        if (remaining <= 0) {
+          clearInterval(countdownTimer);
+          cdEl.style.display = 'none';
+          restartForm();
+        } else {
+          cdEl.textContent = `Starte neu in ${remaining}s …`;
+        }
+      }, 1000);
+    }
+
+    function cancelCountdown() {
+      clearInterval(countdownTimer);
+      cdEl.style.display = 'none';
+    }
+
+    function armFallback() {
+      clearTimeout(fallbackTimer);
+      if (FALLBACK_RESET_MINUTES > 0) {
+        fallbackTimer = setTimeout(() => {
+          // Falls bis dahin kein zweites load kam, trotzdem restarten:
+          restartForm();
+        }, FALLBACK_RESET_MINUTES * 60 * 1000);
+      }
+    }
+
+    function restartForm() {
+      cancelCountdown();
+      clearTimeout(fallbackTimer);
+      frame.src = FORM_URL;
+      firstLoadSeen = false;
+      armFallback();
+    }
+
+    frame.addEventListener('load', () => {
+      clearTimeout(loadGuard);
+      if (!firstLoadSeen) {
+        firstLoadSeen = true;      // Erstes Laden: Formular anzeigen
+        armFallback();             // Zeit-Fallback scharf schalten
+      } else {
+        startCountdown();          // Zweites Laden: Danke-Seite erkannt → Countdown
+      }
+    });
+
+    reloadBtn.addEventListener('click', restartForm);
+    openDirectBtn.addEventListener('click', () => {
+      // Fallback: Öffne Formular direkt im Tab (kein Loop, aber immer nutzbar)
+      window.location.href = FORM_URL;
+    });
+
+    // Start
+    frame.src = FORM_URL;
+
+    // Hilfestichthinweis, falls Embed vergessen wurde
+    if (!FORM_URL.includes('embed=true')) {
+      showNote('Tipp: Nutze den EMBED-LINK (…&embed=true) aus Microsoft Forms → Teilen → </>.');
+    }
+  </script>
+</body>
+</html>
