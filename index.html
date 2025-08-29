@@ -3,38 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>KVP-Umfrage – Kiosk Loop (robust)</title>
+  <title>KVP-Umfrage – Kiosk Loop (mit Fallback)</title>
   <style>
     html, body { margin:0; height:100%; background:#0b0f13; font-family:-apple-system,system-ui,sans-serif; }
     iframe { position:absolute; inset:0; width:100%; height:100%; border:0; background:#fff; }
     .controls { position:fixed; right:16px; bottom:16px; display:grid; gap:12px; z-index:10; }
-    .btn {
-      appearance:none; border:0; border-radius:16px; padding:14px 18px;
-      font-size:18px; font-weight:700; cursor:pointer; color:#0b0f13; background:#e6f4ff;
-      box-shadow:0 8px 24px rgba(0,0,0,.24);
-    }
-    .countdown {
-      position:fixed; left:50%; bottom:16px; transform:translateX(-50%);
-      background:rgba(255,255,255,.95); color:#0b0f13; border-radius:14px; padding:12px 16px;
-      font-weight:700; font-size:16px; display:none; z-index:10; box-shadow:0 8px 24px rgba(0,0,0,.24);
-    }
-    .bar {
-      position:fixed; left:50%; top:12px; transform:translateX(-50%);
-      background:#fff3cd; color:#5c4700; border-radius:12px; padding:10px 14px; font-weight:700;
-      display:none; z-index:10; box-shadow:0 6px 18px rgba(0,0,0,.18);
-    }
-    .fallback {
-      position:fixed; left:50%; top:50%; transform:translate(-50%,-50%);
-      background:#ffffff; border-radius:16px; padding:22px 20px; text-align:center; width:min(92vw,520px);
-      box-shadow:0 20px 48px rgba(0,0,0,.25); display:none; z-index:11;
-    }
-    .fallback h1 { margin:0 0 10px; font-size:20px; }
-    .fallback p { margin:0 0 14px; font-size:16px; color:#333; }
-    .fallback .big {
-      appearance:none; border:0; border-radius:14px; padding:14px 18px; font-size:18px; font-weight:800;
-      background:#0078d4; color:#fff; box-shadow:0 10px 30px rgba(0,120,212,.35); cursor:pointer;
-      width:100%;
-    }
+    .btn { appearance:none; border:0; border-radius:16px; padding:14px 18px; font-size:18px; font-weight:700; cursor:pointer; color:#0b0f13; background:#e6f4ff; box-shadow:0 8px 24px rgba(0,0,0,.24); }
+    .countdown { position:fixed; left:50%; bottom:16px; transform:translateX(-50%); background:rgba(255,255,255,.95); color:#0b0f13; border-radius:14px; padding:12px 16px; font-weight:700; font-size:16px; display:none; z-index:10; box-shadow:0 8px 24px rgba(0,0,0,.24); }
+    .ticker { position:fixed; left:50%; top:12px; transform:translateX(-50%); background:#eef7ff; color:#0b0f13; border-radius:12px; padding:8px 12px; font-weight:700; display:block; z-index:10; box-shadow:0 6px 18px rgba(0,0,0,.18); }
   </style>
 </head>
 <body>
@@ -44,36 +20,30 @@
     <button class="btn" id="reloadBtn">Neu starten</button>
   </div>
   <div class="countdown" id="countdown"></div>
-  <div class="bar" id="bar"></div>
-
-  <div class="fallback" id="fallback">
-    <h1>Formular lädt nicht im eingebetteten Modus</h1>
-    <p>Tippe unten, um die Umfrage direkt zu öffnen. Danach läuft alles normal.</p>
-    <button class="big" id="openDirectBtn">Formular direkt öffnen</button>
-  </div>
+  <div class="ticker" id="ticker">Automatischer Neustart in <span id="mins">--</span> min</div>
 
   <script>
-    // Dein Embed-Link (Jeder kann antworten)
+    // 👉 Dein Embed-Link (mit "Jeder kann antworten")
     const FORM_URL = "https://forms.office.com/Pages/ResponsePage.aspx?id=cFExqCTc9kq5Ok7LmM4erbctvNe8_ItIodmXlBI8bCtUOUg2RUNHUE1KV1laOU41VVRaWFE2MkZRNC4u&embed=true";
+
+    // Countdown nach erkannter Danke-Seite (falls MS Forms doch ein echtes load-Event feuert)
     const RESTART_DELAY_SEC = 8;
-    const TIMEOUT_MS = 5000; // nach 5s Fallback anzeigen, falls kein load-Event
+
+    // Fallback: Harte automatische Neu­ladung nach X Minuten (falls kein load-Event kommt)
+    const FALLBACK_RESET_MINUTES = 2; // ← hier ggf. 3–5 wählen, wenn eure Ausfüllzeit länger ist
 
     const frame = document.getElementById('formFrame');
     const reloadBtn = document.getElementById('reloadBtn');
     const cdEl = document.getElementById('countdown');
-    const bar = document.getElementById('bar');
-    const fallback = document.getElementById('fallback');
-    const openDirectBtn = document.getElementById('openDirectBtn');
+    const ticker = document.getElementById('ticker');
+    const minsEl = document.getElementById('mins');
 
     let firstLoadSeen = false;
     let countdownTimer = null;
     let remaining = RESTART_DELAY_SEC;
-    let loadWatch = null;
-
-    function showBar(msg, ms=5000){
-      bar.textContent = msg; bar.style.display='block';
-      setTimeout(()=> bar.style.display='none', ms);
-    }
+    let fallbackTimer = null;
+    let fallbackEndsAt = null;
+    let tickerInterval = null;
 
     function startCountdown(){
       clearInterval(countdownTimer);
@@ -87,43 +57,47 @@
       },1000);
     }
 
+    function armFallback(minutes){
+      clearTimeout(fallbackTimer);
+      clearInterval(tickerInterval);
+      if (!minutes || minutes <= 0){ ticker.style.display='none'; return; }
+      const now = Date.now();
+      fallbackEndsAt = now + minutes*60*1000;
+      ticker.style.display='block';
+      updateTicker();
+      tickerInterval = setInterval(updateTicker, 1000);
+      fallbackTimer = setTimeout(()=> { restartForm(); }, minutes*60*1000);
+    }
+
+    function updateTicker(){
+      const msLeft = Math.max(0, fallbackEndsAt - Date.now());
+      const m = Math.ceil(msLeft/60000);
+      minsEl.textContent = m;
+    }
+
     function restartForm(){
       clearInterval(countdownTimer);
       cdEl.style.display='none';
       firstLoadSeen = false;
-      loadIframe();
+      // Cache-Busting, damit Forms nicht evtl. eine gecachte Danke-Seite zeigt:
+      const bust = (FORM_URL.includes('?') ? '&' : '?') + 't=' + Date.now();
+      frame.src = FORM_URL + bust;
+      armFallback(FALLBACK_RESET_MINUTES);
     }
 
-    function showFallback(){
-      fallback.style.display='block';
-    }
-
-    function loadIframe(){
-      fallback.style.display='none';
-      frame.src = FORM_URL;
-      clearTimeout(loadWatch);
-      loadWatch = setTimeout(()=> {
-        // Wenn bis hierhin kein 'load' kam, ist das iFrame blockiert → Fallback zeigen
-        showFallback();
-        showBar("Hinweis: iFrame wurde blockiert – direkt öffnen funktioniert immer.");
-      }, TIMEOUT_MS);
-    }
-
+    // Wenn MS Forms zwischen Formular und Danke-Seite wirklich neu lädt, greift das hier:
     frame.addEventListener('load', ()=>{
-      clearTimeout(loadWatch);
-      if(!firstLoadSeen){ firstLoadSeen = true; }
-      else { startCountdown(); }
+      if (!firstLoadSeen){
+        firstLoadSeen = true;          // Erstes load = Formular gestartet
+      } else {
+        startCountdown();              // Zweites load = Danke-Seite → kurzer Loop
+      }
     });
 
     reloadBtn.addEventListener('click', restartForm);
-    openDirectBtn.addEventListener('click', ()=> {
-      // Öffnet das Formular ohne iFrame im selben Tab (funktioniert immer, Loop entfällt – Forms zeigt „Weitere Antwort senden“)
-      const direct = FORM_URL.replace(/&?embed=true\b/,'');
-      window.location.href = direct;
-    });
 
     // Start
-    loadIframe();
+    restartForm();
   </script>
 </body>
 </html>
